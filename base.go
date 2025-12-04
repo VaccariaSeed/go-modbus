@@ -2,15 +2,10 @@ package go_modbus
 
 import (
 	"bufio"
-	"context"
-	"fmt"
+	"errors"
 	"io"
-	"reflect"
-)
-
-const (
-	modbusRtu = "rtu"
-	modbusTcp = "tcp"
+	"net"
+	"syscall"
 )
 
 var mrFuncCodes []byte
@@ -30,101 +25,45 @@ const (
 	WriteMultipleRegisters byte = 0x10 //写多个保持寄存器,整型、浮点型、字符型,把具体的二进制值装入一串连续的保持寄存器
 )
 
-type ModbusStatuter interface {
+type modbusStatute interface {
 	baseDecode(buf *bufio.Reader) error
-	DecodeMasterFrame(frame []byte) error       //解码主站发来的报文
-	DecodeMasterReader(buf *bufio.Reader) error //解码主站发来的报文
-	DecodeSlaveFrame(frame []byte) error        //解码从站响应的报文
-	DecodeSlaveReader(buf *bufio.Reader) error  //解码从站响应的报文
-	Data() []byte                               //获取数据域
-	Encode() ([]byte, error)                    //编码
-	cs(frame []byte) []byte                     //计算cs
-	OriginalFrame() []byte                      //获取原始报文
-	Copy() ModbusStatuter                       //深拷贝
-	SlaveId() byte
-	FuncCode() byte
-	DataParser() *ModbusDataParser //获取一个解析器
+	decodeMasterFrame(frame []byte) error       //解码主站发来的报文
+	decodeMasterReader(buf *bufio.Reader) error //解码主站发来的报文
+	decodeSlaveFrame(frame []byte) error        //解码从站响应的报文
+	decodeSlaveReader(buf *bufio.Reader) error  //解码从站响应的报文
+	encode(frameId uint16, slaveId, functionCode byte, data []byte) ([]byte, error)
+	obtainFuncCode() byte
+	obtainData() []byte
+	identifier() uint16
+	obtainSlaveId() byte
+	obtainFrame() []byte
 }
 
-type Direction string
+var FuncCodeError = errors.New("function code error")
+var CsError = errors.New("cs error")
 
-const (
-	Master Direction = "master"
-	Slave  Direction = "slave"
-)
+var ModbusTCPProtocolFlagError = errors.New("modbus tcp protocol flag error, must be [0x00, 0x00]")
 
-func NewModbusRTUDecoder[T ModbusStatuter](direction Direction, slaveId byte, ch chan<- T) *ModbusDecoder[T] {
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	var decoder T
-	decoderType := reflect.TypeOf(decoder)
-	if decoderType.Kind() == reflect.Ptr {
-		// 如果 T 是指针类型，创建指向的实例
-		elemType := decoderType.Elem()
-		decoder = reflect.New(elemType).Interface().(T)
+var opErr *net.OpError
+
+// CheckTCPErr 校验错误判定失败
+func CheckTCPErr(err error) bool {
+	if errors.As(err, &opErr) && opErr.Timeout() {
+		//TCP通道超时
+		return false
+	} else if errors.Is(err, io.EOF) || // 对端正常关闭
+		errors.Is(err, syscall.ECONNRESET) || // 对端强制重置
+		errors.Is(err, syscall.EPIPE) || errors.As(err, &opErr) {
+		return true
 	} else {
-		// 如果 T 是值类型，创建零值
-		decoder = reflect.Zero(decoderType).Interface().(T)
-	}
-	return &ModbusDecoder[T]{
-		dataDirection: direction,
-		slaveId:       slaveId,
-		ch:            ch,
-		decoder:       decoder,
-		ctx:           ctx,
-		cancel:        cancelFunc,
+		return false
 	}
 }
 
-type ModbusDecoder[T ModbusStatuter] struct {
-	dataDirection Direction //报文方向
-	slaveId       byte      //地址，如果是0，则只在乎报文正确；如果不是0，则即在意报文正确也会比较slaveId
-	ch            chan<- T
-	decoder       T //解码器
-	ctx           context.Context
-	cancel        context.CancelFunc
-}
-
-// StreamDecoder 流式解码，每解析成功一个，则传入到ch中，然后继续解析
-func (m *ModbusDecoder[T]) StreamDecoder(buf *bufio.Reader) error {
-	var err error
-	for {
-		select {
-		case <-m.ctx.Done():
-			m.ctx, m.cancel = context.WithCancel(context.Background())
-			return nil
-		default:
-			err = m.stream(buf)
-			if err != nil {
-				return err
-			}
-		}
+// CheckSerialErr 校验错误判定失败
+func CheckSerialErr(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO) {
+		return true
 	}
-}
-
-func (m *ModbusDecoder[T]) Stop() {
-	m.cancel()
-}
-
-func (m *ModbusDecoder[T]) stream(buf *bufio.Reader) error {
-	var err error
-	if m.dataDirection == Slave {
-		err = m.decoder.DecodeMasterReader(buf)
-	} else if m.dataDirection == Master {
-		err = m.decoder.DecodeSlaveReader(buf)
-	} else {
-		return fmt.Errorf("invalid direction:%v", m.dataDirection)
-	}
-	if err != nil {
-		if err == io.EOF {
-			return err
-		}
-		return nil
-	}
-	frame := m.decoder.Copy()
-	if result, ok := any(frame).(T); ok {
-		if m.slaveId == 0 || m.slaveId == frame.SlaveId() {
-			m.ch <- result
-		}
-	}
-	return nil
+	return false
 }

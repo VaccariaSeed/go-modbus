@@ -4,20 +4,19 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"slices"
 )
 
-var _ ModbusStatuter = (*ModbusRTUStatute)(nil)
+var _ modbusStatute = (*modbusRTUStatute)(nil)
 
-type ModbusRTUStatute struct {
+type modbusRTUStatute struct {
 	original []byte //原始报文
 	slaveId  byte   //从站地址
 	funcCode byte   //功能码
 	data     []byte //数据域
 }
 
-func (m *ModbusRTUStatute) baseDecode(buf *bufio.Reader) error {
+func (m *modbusRTUStatute) baseDecode(buf *bufio.Reader) error {
 	err := binary.Read(buf, binary.LittleEndian, &m.slaveId)
 	if err != nil {
 		return err
@@ -27,7 +26,7 @@ func (m *ModbusRTUStatute) baseDecode(buf *bufio.Reader) error {
 		return err
 	}
 	if !slices.Contains(mrFuncCodes, m.funcCode) {
-		return err
+		return FuncCodeError
 	}
 	m.original = []byte{m.slaveId, m.funcCode}
 	m.data = nil
@@ -35,13 +34,13 @@ func (m *ModbusRTUStatute) baseDecode(buf *bufio.Reader) error {
 }
 
 // DecodeMasterFrame 解码主站发来的报文
-func (m *ModbusRTUStatute) DecodeMasterFrame(frame []byte) error {
+func (m *modbusRTUStatute) decodeMasterFrame(frame []byte) error {
 	buf := bufio.NewReader(bytes.NewReader(frame))
-	return m.DecodeMasterReader(buf)
+	return m.decodeMasterReader(buf)
 }
 
 // DecodeMasterReader 解码主站发来的报文
-func (m *ModbusRTUStatute) DecodeMasterReader(buf *bufio.Reader) error {
+func (m *modbusRTUStatute) decodeMasterReader(buf *bufio.Reader) error {
 	err := m.baseDecode(buf)
 	if err != nil {
 		return err
@@ -76,13 +75,13 @@ func (m *ModbusRTUStatute) DecodeMasterReader(buf *bufio.Reader) error {
 }
 
 // DecodeSlaveFrame 解码从站响应的报文
-func (m *ModbusRTUStatute) DecodeSlaveFrame(frame []byte) error {
+func (m *modbusRTUStatute) decodeSlaveFrame(frame []byte) error {
 	buf := bufio.NewReader(bytes.NewReader(frame))
-	return m.DecodeSlaveReader(buf)
+	return m.decodeSlaveReader(buf)
 }
 
 // DecodeSlaveReader 解码从站响应的报文
-func (m *ModbusRTUStatute) DecodeSlaveReader(buf *bufio.Reader) error {
+func (m *modbusRTUStatute) decodeSlaveReader(buf *bufio.Reader) error {
 	err := m.baseDecode(buf)
 	if err != nil {
 		return err
@@ -107,7 +106,7 @@ func (m *ModbusRTUStatute) DecodeSlaveReader(buf *bufio.Reader) error {
 			return err
 		}
 	} else {
-		m.data = make([]byte, 5)
+		m.data = make([]byte, 4)
 		err = binary.Read(buf, binary.LittleEndian, &m.data)
 		if err != nil {
 			return err
@@ -116,7 +115,7 @@ func (m *ModbusRTUStatute) DecodeSlaveReader(buf *bufio.Reader) error {
 	return m.checkCs(buf)
 }
 
-func (m *ModbusRTUStatute) checkCs(buf *bufio.Reader) error {
+func (m *modbusRTUStatute) checkCs(buf *bufio.Reader) error {
 	m.original = append(m.original, m.data...)
 	//计算cs
 	cs := make([]byte, 2)
@@ -126,24 +125,21 @@ func (m *ModbusRTUStatute) checkCs(buf *bufio.Reader) error {
 	}
 	checkCs := m.cs(m.original)
 	if checkCs[0] != cs[0] || checkCs[1] != cs[1] {
-		return errors.New("cs error")
+		return CsError
 	}
 	m.original = append(m.original, cs...)
 	return nil
 }
 
-// Data 获取数据域
-func (m *ModbusRTUStatute) Data() []byte {
-	return m.data
-}
-
 // Encode 编码
-func (m *ModbusRTUStatute) Encode() ([]byte, error) {
-	//TODO implement me
-	panic("implement me")
+func (m *modbusRTUStatute) encode(_ uint16, slaveId, functionCode byte, data []byte) ([]byte, error) {
+	encode := []byte{slaveId, functionCode}
+	encode = append(encode, data...)
+	cs := m.cs(encode)
+	return append(encode, cs...), nil
 }
 
-func (m *ModbusRTUStatute) cs(frame []byte) []byte {
+func (m *modbusRTUStatute) cs(frame []byte) []byte {
 	crc := uint16(0xFFFF)
 	for _, b := range frame {
 		crc ^= uint16(b)
@@ -158,28 +154,22 @@ func (m *ModbusRTUStatute) cs(frame []byte) []byte {
 	return []byte{byte(crc & 0xFF), byte(crc >> 8)}
 }
 
-// OriginalFrame 获取原始报文
-func (m *ModbusRTUStatute) OriginalFrame() []byte {
-	return m.original
-}
-
-func (m *ModbusRTUStatute) Copy() ModbusStatuter {
-	return &ModbusRTUStatute{
-		original: m.original,
-		slaveId:  m.slaveId,
-		funcCode: m.funcCode,
-		data:     m.data,
-	}
-}
-
-func (m *ModbusRTUStatute) SlaveId() byte {
-	return m.slaveId
-}
-
-func (m *ModbusRTUStatute) FuncCode() byte {
+func (m *modbusRTUStatute) obtainFuncCode() byte {
 	return m.funcCode
 }
 
-func (m *ModbusRTUStatute) DataParser() *ModbusDataParser {
-	return &ModbusDataParser{frame: m, statute: modbusRtu}
+func (m *modbusRTUStatute) obtainData() []byte {
+	return m.data
+}
+
+func (m *modbusRTUStatute) identifier() uint16 {
+	return 0
+}
+
+func (m *modbusRTUStatute) obtainSlaveId() byte {
+	return m.slaveId
+}
+
+func (m *modbusRTUStatute) obtainFrame() []byte {
+	return m.original
 }
