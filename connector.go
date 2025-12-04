@@ -46,7 +46,7 @@ func NewTCPConnector(ip string, port int, connectTimeout, readTimeout, writeTime
 	if writeTimeout <= 0 {
 		writeTimeout = defaultWriteTimeout
 	}
-	return &TCPConnector{ip: ip, port: port, connectTimeout: connectTimeout}
+	return &TCPConnector{ip: ip, port: port, connectTimeout: connectTimeout, readTimeout: readTimeout, writeTimeout: writeTimeout}
 }
 
 type TCPConnector struct {
