@@ -26,7 +26,7 @@ func (m *modbusRTUStatute) baseDecode(buf *bufio.Reader) error {
 		return err
 	}
 	if !slices.Contains(mrFuncCodes, m.funcCode) {
-		return FuncCodeError
+		return FuncCodeError.setFuncCode(m.funcCode)
 	}
 	m.original = []byte{m.slaveId, m.funcCode}
 	m.data = nil

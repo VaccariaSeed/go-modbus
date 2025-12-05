@@ -13,6 +13,7 @@ import (
 )
 
 var NoConnectionError = errors.New("no connected")
+var FuncCodeOrSlaveIdError = errors.New("response funcCode or slaveId error")
 
 type Parity byte
 
@@ -108,18 +109,14 @@ func (T *TCPConnector) Read(codec modbusStatute, ident uint16, slaveId byte, fun
 	if err != nil {
 		return err
 	}
-	for {
-		err = codec.decodeSlaveReader(T.reader)
-		if err != nil {
-			if errors.Is(err, FuncCodeError) || errors.Is(err, ModbusTCPProtocolFlagError) {
-				continue
-			}
-			return err
-		}
-		if ident == codec.identifier() && slaveId == codec.obtainSlaveId() && funcCode == codec.obtainFuncCode() {
-			return nil
-		}
+	err = codec.decodeSlaveReader(T.reader)
+	if err != nil {
+		return err
 	}
+	if ident == codec.identifier() && slaveId == codec.obtainSlaveId() && funcCode == codec.obtainFuncCode() {
+		return nil
+	}
+	return FuncCodeOrSlaveIdError
 }
 
 func (T *TCPConnector) Flush() error {
@@ -194,18 +191,14 @@ func (s *SerialConnector) Read(codec modbusStatute, ident uint16, slaveId byte, 
 	if s.serialPort == nil {
 		return NoConnectionError
 	}
-	for {
-		err := codec.decodeSlaveReader(s.reader)
-		if err != nil {
-			if errors.Is(err, FuncCodeError) || errors.Is(err, CsError) {
-				continue
-			}
-			return err
-		}
-		if ident == codec.identifier() && slaveId == codec.obtainSlaveId() && funcCode == codec.obtainFuncCode() {
-			return nil
-		}
+	err := codec.decodeSlaveReader(s.reader)
+	if err != nil {
+		return err
 	}
+	if ident == codec.identifier() && slaveId == codec.obtainSlaveId() && funcCode == codec.obtainFuncCode() {
+		return nil
+	}
+	return FuncCodeOrSlaveIdError
 }
 
 func (s *SerialConnector) Flush() error {

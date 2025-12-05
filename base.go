@@ -3,6 +3,7 @@ package go_modbus
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"syscall"
@@ -39,7 +40,27 @@ type modbusStatute interface {
 	obtainFrame() []byte
 }
 
-var FuncCodeError = errors.New("function code error")
+var _ error = (*FuncCodeErr)(nil)
+
+type FuncCodeErr struct {
+	funcCode byte
+}
+
+func (f *FuncCodeErr) Error() string {
+	return fmt.Sprintf("Function code 0x%02x", f.funcCode)
+}
+
+func (f *FuncCodeErr) FuncCode() byte {
+	return f.funcCode
+}
+
+func (f *FuncCodeErr) setFuncCode(funcCode byte) *FuncCodeErr {
+	f.funcCode = funcCode
+	return f
+}
+
+var FuncCodeError = &FuncCodeErr{}
+
 var CsError = errors.New("cs error")
 
 var ModbusTCPProtocolFlagError = errors.New("modbus tcp protocol flag error, must be [0x00, 0x00]")

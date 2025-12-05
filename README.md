@@ -55,5 +55,8 @@ err := client.Close()
 err := client.Flush()
 ```
 
+###### 如果设备时返回的异常功能码
+读写操作的方法都会返回FuncCodeErr，需对错误进行类型判断
+
 
 **读写方法在client结构体中，注释详细**

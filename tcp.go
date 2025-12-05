@@ -34,7 +34,7 @@ func (m *modbusTCPStatute) baseDecode(buf *bufio.Reader) error {
 	m.funcCode = peeked[7]
 	if !slices.Contains(mrFuncCodes, m.funcCode) {
 		_, _ = buf.ReadByte()
-		return FuncCodeError
+		return FuncCodeError.setFuncCode(m.funcCode)
 	}
 	_, err = buf.Discard(8)
 	if err != nil {
