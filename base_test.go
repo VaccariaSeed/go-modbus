@@ -33,7 +33,7 @@ func TestTCP(t *testing.T) {
 	for {
 		fmt.Println("----------------------")
 		// 设置随机种子，使用当前时间纳秒
-		length, result, readErr := master.ReadDiscreteInputs(1, 0, 9)
+		length, result, readErr := master.ReadHoldingRegisters(1, 11, 9)
 		if readErr != nil {
 			fmt.Printf("ReadCoils err: %v \n", readErr)
 		} else {
