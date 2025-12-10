@@ -11,8 +11,12 @@ import (
 
 var mrFuncCodes []byte
 
+var errFuncCodes []byte
+
 func init() {
 	mrFuncCodes = []byte{ReadCoils, ReadDiscreteInputs, ReadHoldingRegisters, ReadInputRegisters, WriteSingleCoil, WriteSingleRegister, WriteMultipleCoils, WriteMultipleRegisters}
+
+	errFuncCodes = []byte{ReadCoils + 0x80, ReadDiscreteInputs + 0x80, ReadHoldingRegisters + 0x80, ReadInputRegisters + 0x80, WriteSingleCoil + 0x80, WriteSingleRegister + 0x80, WriteMultipleCoils + 0x80, WriteMultipleRegisters + 0x80}
 }
 
 const (
@@ -40,26 +44,27 @@ type modbusStatute interface {
 	obtainFrame() []byte
 }
 
-var _ error = (*FuncCodeErr)(nil)
+var _ error = (*FuncCodeError)(nil)
 
-type FuncCodeErr struct {
-	funcCode byte
+type FuncCodeError struct {
+	funcCode  byte
+	errorCode byte
 }
 
-func (f *FuncCodeErr) Error() string {
-	return fmt.Sprintf("Function code 0x%02x", f.funcCode)
+func (f *FuncCodeError) Error() string {
+	return fmt.Sprintf("Function code 0x%02x, error code 0x%02x", f.funcCode, f.errorCode)
 }
 
-func (f *FuncCodeErr) FuncCode() byte {
-	return f.funcCode
+func (f *FuncCodeError) ErrorCode() (errFuncCode, errorCode byte) {
+	return f.funcCode, f.errorCode
 }
 
-func (f *FuncCodeErr) setFuncCode(funcCode byte) *FuncCodeErr {
-	f.funcCode = funcCode
+func (f *FuncCodeError) setFuncCode(funcCode byte, errorCode byte) *FuncCodeError {
+	f.funcCode, f.errorCode = funcCode, errorCode
 	return f
 }
 
-var FuncCodeError = &FuncCodeErr{}
+var fce = &FuncCodeError{}
 
 var CsError = errors.New("cs error")
 

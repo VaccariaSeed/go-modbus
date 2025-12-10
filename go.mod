@@ -1,6 +1,6 @@
 module github.com/VaccariaSeed/go-modbus
 
-go 1.25
+go 1.25.0
 
 require github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
 

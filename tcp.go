@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"slices"
 )
 
@@ -32,9 +33,9 @@ func (m *modbusTCPStatute) baseDecode(buf *bufio.Reader) error {
 	m.slaveId = peeked[6]
 	//获取功能码
 	m.funcCode = peeked[7]
-	if !slices.Contains(mrFuncCodes, m.funcCode) {
+	if !slices.Contains(mrFuncCodes, m.funcCode) && !slices.Contains(errFuncCodes, m.funcCode) {
 		_, _ = buf.ReadByte()
-		return FuncCodeError.setFuncCode(m.funcCode)
+		return errors.New("modbus function code error")
 	}
 	_, err = buf.Discard(8)
 	if err != nil {
@@ -48,7 +49,10 @@ func (m *modbusTCPStatute) baseDecode(buf *bufio.Reader) error {
 		return err
 	}
 	m.original = append(peeked, m.data...)
-	return err
+	if slices.Contains(errFuncCodes, m.funcCode) {
+		return fce.setFuncCode(m.funcCode, m.data[0])
+	}
+	return nil
 }
 
 func (m *modbusTCPStatute) decodeMasterFrame(frame []byte) error {

@@ -126,13 +126,10 @@ func (c *ModbusClient) send(slaveId byte, funcCode byte, data []byte) error {
 	}
 	time.Sleep(c.rwInterval)
 	err = c.conn.Read(c.codec, ident, slaveId, funcCode)
-	if err != nil {
-		return err
-	}
 	if c.ReceivePrintHandler != nil {
 		c.ReceivePrintHandler(c.codec.obtainFrame())
 	}
-	return nil
+	return err
 }
 
 // ReadCoils 读线圈
