@@ -2,197 +2,103 @@ package go_modbus
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/binary"
 	"errors"
-	"slices"
+	"time"
+
+	"github.com/VaccariaSeed/go-modbus/statute"
+	"github.com/tarm/serial"
 )
 
-var _ modbusStatute = (*modbusRTUStatute)(nil)
+type Parity byte
 
-type modbusRTUStatute struct {
-	original []byte //原始报文
-	slaveId  byte   //从站地址
-	funcCode byte   //功能码
-	data     []byte //数据域
+// NewModbusRTUPacket 创建一个RTU连接
+func NewModbusRTUPacket(port string, baud int, dataBit byte, parity Parity, stopBit byte, readTimeout, rwInterval time.Duration, modbusType StatuteType) (*ModbusRTUPacket, error) {
+	if readTimeout <= 0 {
+		readTimeout = defaultReadTimeout
+	}
+	if rwInterval <= 0 {
+		rwInterval = defaultRwTimeout
+	}
+	tc := &ModbusRTUPacket{
+		ModbusPacket: &ModbusPacket{rwInterval: rwInterval},
+		port:         port,
+		baud:         baud,
+		dataBit:      dataBit,
+		parity:       parity,
+		stopBit:      stopBit,
+		readTimeout:  readTimeout,
+	}
+	switch modbusType {
+	case ModbusTCP:
+		tc.ModbusCodec = statute.NewModbusTCPCodec()
+	case ModbusRTU:
+		tc.ModbusCodec = statute.NewModbusRTUCodec()
+	default:
+		return nil, errors.New("modbus type not supported")
+	}
+	tc.ModbusPacket.read = tc.read
+	tc.ModbusPacket.write = tc.write
+	return tc, nil
 }
 
-func (m *modbusRTUStatute) baseDecode(buf *bufio.Reader) error {
-	err := binary.Read(buf, binary.LittleEndian, &m.slaveId)
+type ModbusRTUPacket struct {
+	*ModbusPacket
+
+	port        string        //串口号
+	baud        int           //波特率
+	dataBit     byte          //数据位
+	parity      Parity        //校验位
+	stopBit     byte          //停止位
+	readTimeout time.Duration //读超时
+
+	serialPort *serial.Port
+
+	reader *bufio.Reader
+}
+
+func (T *ModbusRTUPacket) Connect() error {
+	config := &serial.Config{Name: T.port, Baud: T.baud, Size: T.dataBit, Parity: serial.Parity(T.parity), StopBits: serial.StopBits(T.stopBit), ReadTimeout: T.readTimeout}
+	port, err := serial.OpenPort(config)
 	if err != nil {
 		return err
 	}
-	err = binary.Read(buf, binary.LittleEndian, &m.funcCode)
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(mrFuncCodes, m.funcCode) && !slices.Contains(errFuncCodes, m.funcCode) {
-		return errors.New("modbus function code error")
-	}
-	m.original = []byte{m.slaveId, m.funcCode}
-	m.data = nil
+	T.serialPort = port
+	T.reader = bufio.NewReader(port)
 	return nil
 }
 
-// DecodeMasterFrame 解码主站发来的报文
-func (m *modbusRTUStatute) decodeMasterFrame(frame []byte) error {
-	buf := bufio.NewReader(bytes.NewReader(frame))
-	return m.decodeMasterReader(buf)
-}
-
-// DecodeMasterReader 解码主站发来的报文
-func (m *modbusRTUStatute) decodeMasterReader(buf *bufio.Reader) error {
-	err := m.baseDecode(buf)
-	if err != nil {
-		return err
-	}
-	if slices.Contains(mrFuncCodes, m.funcCode) {
-		if m.funcCode == ReadCoils || m.funcCode == ReadDiscreteInputs || m.funcCode == ReadHoldingRegisters || m.funcCode == ReadInputRegisters || m.funcCode == WriteSingleCoil || m.funcCode == WriteSingleRegister {
-			//读线圈，读离散输入寄存器.读保持寄存器,读输入寄存器
-			m.data = make([]byte, 4)
-			err = binary.Read(buf, binary.LittleEndian, &m.data)
-			if err != nil {
-				return err
-			}
-		} else {
-			startAddrAndSize := make([]byte, 4)
-			err = binary.Read(buf, binary.LittleEndian, &startAddrAndSize)
-			if err != nil {
-				return err
-			}
-			var length byte
-			err = binary.Read(buf, binary.LittleEndian, &length)
-			if err != nil {
-				return err
-			}
-			data := make([]byte, length)
-			err = binary.Read(buf, binary.LittleEndian, &data)
-			if err != nil {
-				return err
-			}
-			m.data = append(startAddrAndSize, length)
-			m.data = append(m.data, data...)
-		}
-		return m.checkCs(buf)
-	}
-	return m.errorFuncCode(buf)
-}
-
-func (m *modbusRTUStatute) errorFuncCode(buf *bufio.Reader) error {
-	if slices.Contains(errFuncCodes, m.funcCode) {
-		m.data = make([]byte, 1)
-		err := binary.Read(buf, binary.LittleEndian, &m.data)
-		if err != nil {
-			return err
-		}
-		err = m.checkCs(buf)
-		if err != nil {
-			return err
-		}
-		return fce.setFuncCode(m.funcCode, m.data[0])
+func (T *ModbusRTUPacket) Close() error {
+	T.lock.Lock()
+	defer func() {
+		T.reader = nil
+		T.serialPort = nil
+		T.lock.Unlock()
+	}()
+	if T.serialPort != nil {
+		return T.serialPort.Close()
 	}
 	return nil
 }
 
-// DecodeSlaveFrame 解码从站响应的报文
-func (m *modbusRTUStatute) decodeSlaveFrame(frame []byte) error {
-	buf := bufio.NewReader(bytes.NewReader(frame))
-	return m.decodeSlaveReader(buf)
-}
-
-// DecodeSlaveReader 解码从站响应的报文
-func (m *modbusRTUStatute) decodeSlaveReader(buf *bufio.Reader) error {
-	err := m.baseDecode(buf)
-	if err != nil {
-		return err
+func (T *ModbusRTUPacket) write(frame []byte) (int, error) {
+	if T.serialPort == nil {
+		return 0, NoConnectionError
 	}
-	if slices.Contains(mrFuncCodes, m.funcCode) {
-		if m.funcCode == ReadCoils || m.funcCode == ReadDiscreteInputs || m.funcCode == ReadHoldingRegisters || m.funcCode == ReadInputRegisters {
-			//读线圈
-			var length byte
-			err = binary.Read(buf, binary.LittleEndian, &length)
-			if err != nil {
-				return err
-			}
-			data := make([]byte, length)
-			err = binary.Read(buf, binary.LittleEndian, &data)
-			if err != nil {
-				return err
-			}
-			m.data = append([]byte{length}, data...)
-		} else if m.funcCode == WriteSingleCoil || m.funcCode == WriteSingleRegister || m.funcCode == WriteMultipleRegisters {
-			m.data = make([]byte, 4)
-			err = binary.Read(buf, binary.LittleEndian, &m.data)
-			if err != nil {
-				return err
-			}
-		} else {
-			m.data = make([]byte, 4)
-			err = binary.Read(buf, binary.LittleEndian, &m.data)
-			if err != nil {
-				return err
-			}
-		}
-		return m.checkCs(buf)
+	return T.serialPort.Write(frame)
+}
+
+func (T *ModbusRTUPacket) read() ([]byte, error) {
+	if T.serialPort == nil {
+		return nil, NoConnectionError
 	}
-	return m.errorFuncCode(buf)
+	return T.ModbusCodec.Decode(T.reader)
 }
 
-func (m *modbusRTUStatute) checkCs(buf *bufio.Reader) error {
-	m.original = append(m.original, m.data...)
-	//计算cs
-	cs := make([]byte, 2)
-	err := binary.Read(buf, binary.BigEndian, &cs)
-	if err != nil {
-		return err
+func (T *ModbusRTUPacket) Flush() error {
+	T.lock.Lock()
+	defer T.lock.Unlock()
+	if T.serialPort == nil {
+		return NoConnectionError
 	}
-	checkCs := m.cs(m.original)
-	if checkCs[0] != cs[0] || checkCs[1] != cs[1] {
-		return CsError
-	}
-	m.original = append(m.original, cs...)
-	return nil
-}
-
-// Encode 编码
-func (m *modbusRTUStatute) encode(_ uint16, slaveId, functionCode byte, data []byte) ([]byte, error) {
-	encode := []byte{slaveId, functionCode}
-	encode = append(encode, data...)
-	cs := m.cs(encode)
-	return append(encode, cs...), nil
-}
-
-func (m *modbusRTUStatute) cs(frame []byte) []byte {
-	crc := uint16(0xFFFF)
-	for _, b := range frame {
-		crc ^= uint16(b)
-		for i := 0; i < 8; i++ {
-			if (crc & 0x0001) != 0 {
-				crc = (crc >> 1) ^ 0xA001
-			} else {
-				crc = crc >> 1
-			}
-		}
-	}
-	return []byte{byte(crc & 0xFF), byte(crc >> 8)}
-}
-
-func (m *modbusRTUStatute) obtainFuncCode() byte {
-	return m.funcCode
-}
-
-func (m *modbusRTUStatute) obtainData() []byte {
-	return m.data
-}
-
-func (m *modbusRTUStatute) identifier() uint16 {
-	return 0
-}
-
-func (m *modbusRTUStatute) obtainSlaveId() byte {
-	return m.slaveId
-}
-
-func (m *modbusRTUStatute) obtainFrame() []byte {
-	return m.original
+	return T.serialPort.Flush()
 }

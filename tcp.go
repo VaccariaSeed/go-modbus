@@ -2,100 +2,125 @@ package go_modbus
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/binary"
 	"errors"
-	"slices"
+	"io"
+	"net"
+	"strconv"
+	"time"
+
+	"github.com/VaccariaSeed/go-modbus/statute"
 )
 
-var _ modbusStatute = (*modbusTCPStatute)(nil)
+var NoConnectionError = errors.New("no connected")
 
-type modbusTCPStatute struct {
-	frameId  uint16
-	original []byte //原始报文
-	slaveId  byte   //从站地址
-	funcCode byte   //功能码
-	data     []byte //数据域
+// StatuteType 协议类型
+type StatuteType string
+
+const (
+	ModbusTCP StatuteType = "modbusTCP"
+	ModbusRTU StatuteType = "modbusRTU"
+)
+
+const (
+	defaultRwTimeout      = 20 * time.Millisecond
+	defaultConnectTimeout = 3 * time.Second
+	defaultReadTimeout    = 2 * time.Second
+	defaultWriteTimeout   = 2 * time.Second
+)
+
+// NewModbusTCPPacket 创建一个TCP连接
+func NewModbusTCPPacket(ip string, port int, connectTimeout, readTimeout, writeTimeout, rwInterval time.Duration, modbusType StatuteType) (*ModbusTCPPacket, error) {
+	if connectTimeout <= 0 {
+		connectTimeout = defaultConnectTimeout
+	}
+	if readTimeout <= 0 {
+		readTimeout = defaultReadTimeout
+	}
+	if writeTimeout <= 0 {
+		writeTimeout = defaultWriteTimeout
+	}
+	if rwInterval <= 0 {
+		rwInterval = defaultRwTimeout
+	}
+	tc := &ModbusTCPPacket{ip: ip, port: port, connectTimeout: connectTimeout, readTimeout: readTimeout, writeTimeout: writeTimeout, ModbusPacket: &ModbusPacket{rwInterval: rwInterval}}
+	switch modbusType {
+	case ModbusTCP:
+		tc.ModbusCodec = statute.NewModbusTCPCodec()
+	case ModbusRTU:
+		tc.ModbusCodec = statute.NewModbusRTUCodec()
+	default:
+		return nil, errors.New("modbus type not supported")
+	}
+	tc.ModbusPacket.read = tc.read
+	tc.ModbusPacket.write = tc.write
+	return tc, nil
 }
 
-func (m *modbusTCPStatute) baseDecode(buf *bufio.Reader) error {
-	peeked, err := buf.Peek(8)
+// ModbusTCPPacket MODBUS TCP
+type ModbusTCPPacket struct {
+	*ModbusPacket
+	ip             string
+	port           int
+	connectTimeout time.Duration //连接超时
+	readTimeout    time.Duration //读超时
+	writeTimeout   time.Duration //写超时
+	conn           *net.TCPConn
+	reader         *bufio.Reader
+}
+
+func (T *ModbusTCPPacket) Connect() error {
+	T.lock.Lock()
+	defer T.lock.Unlock()
+	conn, err := net.DialTimeout("tcp", T.ip+":"+strconv.Itoa(T.port), T.connectTimeout)
 	if err != nil {
 		return err
 	}
-	m.frameId = binary.BigEndian.Uint16([]byte{peeked[0], peeked[1]})
-	//获取Modbus TCP协议协议
-	if peeked[2] != 0 && peeked[3] != 0 {
-		_, _ = buf.ReadByte()
-		return ModbusTCPProtocolFlagError
-	}
-	//获取单元标识符
-	m.slaveId = peeked[6]
-	//获取功能码
-	m.funcCode = peeked[7]
-	if !slices.Contains(mrFuncCodes, m.funcCode) && !slices.Contains(errFuncCodes, m.funcCode) {
-		_, _ = buf.ReadByte()
-		return errors.New("modbus function code error")
-	}
-	_, err = buf.Discard(8)
-	if err != nil {
-		return err
-	}
-	//获取所有的长度
-	length := binary.BigEndian.Uint16([]byte{peeked[4], peeked[5]}) - 2
-	m.data = make([]byte, length)
-	err = binary.Read(buf, binary.LittleEndian, &m.data)
-	if err != nil {
-		return err
-	}
-	m.original = append(peeked, m.data...)
-	if slices.Contains(errFuncCodes, m.funcCode) {
-		return fce.setFuncCode(m.funcCode, m.data[0])
+	T.conn = conn.(*net.TCPConn)
+	T.reader = bufio.NewReader(conn)
+	return nil
+}
+
+func (T *ModbusTCPPacket) Close() error {
+	T.lock.Lock()
+	defer func() {
+		T.reader = nil
+		T.conn = nil
+		T.lock.Unlock()
+	}()
+	if T.conn != nil {
+		return T.conn.Close()
 	}
 	return nil
 }
 
-func (m *modbusTCPStatute) decodeMasterFrame(frame []byte) error {
-	buf := bufio.NewReader(bytes.NewReader(frame))
-	return m.decodeMasterReader(buf)
+func (T *ModbusTCPPacket) write(frame []byte) (int, error) {
+	if T.conn == nil {
+		return 0, NoConnectionError
+	}
+	err := T.conn.SetWriteDeadline(time.Now().Add(T.writeTimeout))
+	if err != nil {
+		return 0, err
+	}
+	return T.conn.Write(frame)
 }
 
-func (m *modbusTCPStatute) decodeMasterReader(buf *bufio.Reader) error {
-	return m.baseDecode(buf)
+func (T *ModbusTCPPacket) read() ([]byte, error) {
+	if T.conn == nil {
+		return nil, NoConnectionError
+	}
+	err := T.conn.SetReadDeadline(time.Now().Add(T.readTimeout))
+	if err != nil {
+		return nil, err
+	}
+	return T.ModbusCodec.Decode(T.reader)
 }
 
-func (m *modbusTCPStatute) decodeSlaveFrame(frame []byte) error {
-	buf := bufio.NewReader(bytes.NewReader(frame))
-	return m.decodeSlaveReader(buf)
-}
-
-func (m *modbusTCPStatute) decodeSlaveReader(buf *bufio.Reader) error {
-	return m.baseDecode(buf)
-}
-
-func (m *modbusTCPStatute) encode(frameId uint16, slaveId, functionCode byte, data []byte) ([]byte, error) {
-	encode := []byte{byte(frameId >> 8), byte(frameId), 0x00, 0x00}
-	data1 := append([]byte{slaveId, functionCode}, data...)
-	encode = append(encode, byte(len(data1)>>8), byte(len(data1)))
-	return append(encode, data1...), nil
-}
-
-func (m *modbusTCPStatute) obtainFuncCode() byte {
-	return m.funcCode
-}
-
-func (m *modbusTCPStatute) obtainData() []byte {
-	return m.data
-}
-
-func (m *modbusTCPStatute) identifier() uint16 {
-	return m.frameId
-}
-
-func (m *modbusTCPStatute) obtainSlaveId() byte {
-	return m.slaveId
-}
-
-func (m *modbusTCPStatute) obtainFrame() []byte {
-	return m.original
+func (T *ModbusTCPPacket) Flush() error {
+	T.lock.Lock()
+	defer T.lock.Unlock()
+	if T.conn == nil {
+		return NoConnectionError
+	}
+	_, err := io.ReadAll(T.reader)
+	return err
 }
