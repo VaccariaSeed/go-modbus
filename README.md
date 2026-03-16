@@ -3,8 +3,6 @@ modbus_rtu and modbus TCP protocol
 
 **需要自己维护通道连接状态，需自己根据错误判定是否重连**
 
-**You need to maintain the channel connection status yourself and decide whether to reconnect based on errors**
-
 #### TCP
 ```go
 tcp, err := NewModbusTCPPacket("127.0.0.1", 502, defaultConnectTimeout, defaultReadTimeout, defaultWriteTimeout, defaultRwTimeout, ModbusTCP)
