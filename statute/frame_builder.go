@@ -1,7 +1,26 @@
-package go_modbus
+package statute
 
-import (
-	"encoding/binary"
+import "encoding/binary"
+
+var mrFuncCodes []byte
+
+var errFuncCodes []byte
+
+func init() {
+	mrFuncCodes = []byte{ReadCoils, ReadDiscreteInputs, ReadHoldingRegisters, ReadInputRegisters, WriteSingleCoil, WriteSingleRegister, WriteMultipleCoils, WriteMultipleRegisters}
+
+	errFuncCodes = []byte{ReadCoils + 0x80, ReadDiscreteInputs + 0x80, ReadHoldingRegisters + 0x80, ReadInputRegisters + 0x80, WriteSingleCoil + 0x80, WriteSingleRegister + 0x80, WriteMultipleCoils + 0x80, WriteMultipleRegisters + 0x80}
+}
+
+const (
+	ReadCoils              byte = 0x01 //读线圈,位,取得一组逻辑线圈的当前状态(ON/OFF)
+	ReadDiscreteInputs     byte = 0x02 //读离散输入寄存器,位,取得一组开关输入的当前状态(ON/OFF)
+	ReadHoldingRegisters   byte = 0x03 //读保持寄存器,整型、浮点型、字符型,在一个或多个保持寄存器中取得当前的二进制值
+	ReadInputRegisters     byte = 0x04 //读输入寄存器,整型、浮点型,在一个或多个输入寄存器中取得当前的二进制值
+	WriteSingleCoil        byte = 0x05 //写单个线圈寄存器,位,强置一个逻辑线圈的通断状态
+	WriteSingleRegister    byte = 0x06 //写单个保持寄存器,整型、浮点型、字符型,把具体二进制值装入一个保持寄存器
+	WriteMultipleCoils     byte = 0x0F //写多个线圈寄存器,位,强置一串连续逻辑线圈的通断
+	WriteMultipleRegisters byte = 0x10 //写多个保持寄存器,整型、浮点型、字符型,把具体的二进制值装入一串连续的保持寄存器
 )
 
 // modbusFrameBuilder RTU报文构造器
@@ -20,7 +39,7 @@ func (m *modbusFrameBuilder) buildReadCoilsRequest(addr, number uint16) []byte {
 
 // 生成读线圈响应的数据域, 功能码0x01
 // status 每个线圈的状态，请按照顺序输入;不传数据会返回一个"从站设备忙"，当errResp为true时，功能码需要加0x80
-func (m *modbusFrameBuilder) buildReadCoilsResponse(status ...bool) (data []byte, errResp bool) {
+func (m *modbusFrameBuilder) buildReadCoilsResponse(status ...CoilStatus) (data []byte, errResp bool) {
 	if status == nil || len(status) == 0 {
 		return []byte{0x06}, true
 	}
@@ -49,7 +68,7 @@ func (m *modbusFrameBuilder) buildReadDiscreteInputsRequest(address, number uint
 
 // 生成读离散输入寄存器的数据域, 功能码0x02
 // status 每个线圈的状态，请按照顺序输入;不传数据会返回一个"从站设备忙"，当errResp为true时，功能码需要加0x80
-func (m *modbusFrameBuilder) buildReadDiscreteInputsResponse(status ...bool) (data []byte, errResp bool) {
+func (m *modbusFrameBuilder) buildReadDiscreteInputsResponse(status ...CoilStatus) (data []byte, errResp bool) {
 	return m.buildReadCoilsResponse(status...)
 }
 
@@ -94,7 +113,7 @@ func (m *modbusFrameBuilder) buildReadInputInputsResponse(value ...uint16) (data
 // 生成写单个线圈寄存器的请求或响应 功能码0x05
 // addr 寄存器起始地址
 // value 设定值 写0xFF00表示线圈为ON，写0x0000表示线圈为OFF
-func (m *modbusFrameBuilder) buildWriteSingleCoil(address uint16, value bool) []byte {
+func (m *modbusFrameBuilder) buildWriteSingleCoil(address uint16, value CoilStatus) []byte {
 	var val uint16 = 0x0000
 	if value {
 		val = 0xFF00
@@ -113,7 +132,7 @@ func (m *modbusFrameBuilder) buildWriteSingleRegister(address, value uint16) []b
 // addr 寄存器起始地址
 // number 寄存器数量
 // status 线圈状态
-func (m *modbusFrameBuilder) buildWriteMultipleCoilsRequest(address, number uint16, status ...bool) []byte {
+func (m *modbusFrameBuilder) buildWriteMultipleCoilsRequest(address, number uint16, status ...CoilStatus) []byte {
 	data, _ := m.buildReadCoilsResponse(status...)
 	data1 := append(m.buildReadCoilsRequest(address, number), data...)
 	return data1
