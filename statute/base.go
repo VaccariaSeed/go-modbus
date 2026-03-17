@@ -27,11 +27,11 @@ type ModbusCodec interface {
 	// number 寄存器数量
 	BuildReadHoldingRegisters(slaveId byte, address, number uint16) []byte
 
-	// BuildReadInputInputs 读输入寄存器
+	// BuildReadInputRegisters 读输入寄存器
 	// slaveId 从站id
 	// addr 寄存器起始地址
 	// number 寄存器数量
-	BuildReadInputInputs(slaveId byte, address, number uint16) []byte
+	BuildReadInputRegisters(slaveId byte, address, number uint16) []byte
 
 	// BuildWriteSingleCoil 写单个线圈
 	// slaveId 从站id

@@ -100,7 +100,7 @@ func (m *modbusFrameBuilder) buildReadHoldingInputsResponse(value ...uint16) (da
 // 生成读输入寄存器的请求 功能码0x04
 // addr 寄存器起始地址
 // number 寄存器数量
-func (m *modbusFrameBuilder) buildReadInputInputsRequest(address, number uint16) []byte {
+func (m *modbusFrameBuilder) buildReadInputRegistersRequest(address, number uint16) []byte {
 	return m.buildReadCoilsRequest(address, number)
 }
 

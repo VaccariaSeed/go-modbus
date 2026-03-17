@@ -69,12 +69,12 @@ func (T *ModbusPacket) ReadHoldingRegisters(slaveId byte, address, number uint16
 	return data, nil
 }
 
-// ReadInputInputs 读输入寄存器
+// ReadInputRegisters 读输入寄存器
 // slaveId 从站id
 // addr 寄存器起始地址
 // number 寄存器数量
-func (T *ModbusPacket) ReadInputInputs(slaveId byte, address, number uint16) ([]byte, error) {
-	req := T.BuildReadInputInputs(slaveId, address, number)
+func (T *ModbusPacket) ReadInputRegisters(slaveId byte, address, number uint16) ([]byte, error) {
+	req := T.BuildReadInputRegisters(slaveId, address, number)
 	data, err := T.wr(req)
 	if err != nil {
 		return nil, err

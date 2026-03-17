@@ -72,12 +72,12 @@ func (m *ModbusRTUCodec) BuildReadHoldingRegisters(slaveId byte, address, number
 	return m.buildFrame(slaveId, ReadHoldingRegisters, data)
 }
 
-// BuildReadInputInputs 读输入寄存器
+// BuildReadInputRegisters 读输入寄存器
 // slaveId 从站id
 // addr 寄存器起始地址
 // number 寄存器数量
-func (m *ModbusRTUCodec) BuildReadInputInputs(slaveId byte, address, number uint16) []byte {
-	data := m.buildReadInputInputsRequest(address, number)
+func (m *ModbusRTUCodec) BuildReadInputRegisters(slaveId byte, address, number uint16) []byte {
+	data := m.buildReadInputRegistersRequest(address, number)
 	return m.buildFrame(slaveId, ReadInputRegisters, data)
 }
 
